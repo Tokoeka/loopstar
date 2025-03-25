@@ -30,6 +30,7 @@ export const args = Args.create(
         options: [
           ["smol", "A Shrunken Adventurer am I"],
           ["casual", "Casual"],
+          ["gyou", "Grey You"],
           ["aftercore", "Aftercore"],
         ],
         setting: "",
@@ -136,6 +137,10 @@ export const args = Args.create(
         help: "Attempt to use the voter booth if we have access.",
         default: true,
       }),
+      pocketprofessor: Args.boolean({
+        help: "Attempt to use the pocket professor.",
+        default: true,
+      }),
     }),
     smol: Args.group("Path: A Shrunken Adventurer am I", {
       skipfork: Args.flag({
@@ -186,12 +191,18 @@ export const args = Args.create(
         default: 50000,
       }),
     }),
+    gyou: Args.group("Path: Grey You", {
+      absorb: Args.string({
+        help: "A comma-separated list of skills to get, in addition to skills that will directly help the run.",
+        default: "",
+      }),
+    }),
     aftercore: Args.group("Path: Aftercore", {
       goal: Args.string({
         help: "An aftercore goal to accomplish.",
         options: [
-          ["level", "Level up to level 13."],
-          ["organ", "Get your steel organ."],
+          ["level", "Level up to level 13"],
+          ["organ", "Get your steel organ"],
           ["menagerie", "Unlock the Cobb's Knob Menagerie"],
           ["dis", "Complete the Suburbs of Dis quest"],
         ],

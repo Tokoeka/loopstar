@@ -9,13 +9,13 @@ import {
   visitUrl,
   wait,
 } from "kolmafia";
-import { $item, $monster, CombatLoversLocket, get, have } from "libram";
+import { $item, $monster, $skill, CombatLoversLocket, get, have } from "libram";
 import { args } from "../args";
 import { underStandard } from "../lib";
 
 type SummonSource = {
   name: string;
-  available: () => number;
+  remaining: () => number;
   ready?: () => boolean;
   canFight: (mon: Monster) => boolean;
   summon: (mon: Monster) => void;
@@ -23,7 +23,8 @@ type SummonSource = {
 export const summonSources: SummonSource[] = [
   {
     name: "Numberology",
-    available: () => {
+    remaining: () => {
+      if (!have($skill`Calculate the Universe`)) return 0;
       if (get("skillLevel144") === 0) return 0;
       if (get("_universeCalculated") === 3) return 0;
       return get("_universeCalculated") < get("skillLevel144") ? 1 : 0;
@@ -34,13 +35,13 @@ export const summonSources: SummonSource[] = [
   },
   {
     name: "White Page",
-    available: () => (have($item`white page`) ? 1 : 0),
+    remaining: () => (have($item`white page`) ? 1 : 0),
     canFight: (mon: Monster) => mon === $monster`white lion`,
     summon: () => use($item`white page`),
   },
   {
     name: "Combat Locket",
-    available: () =>
+    remaining: () =>
       CombatLoversLocket.have()
         ? CombatLoversLocket.reminiscesLeft() - args.resources.savelocket
         : 0,
@@ -49,18 +50,22 @@ export const summonSources: SummonSource[] = [
   },
   {
     name: "Cargo Shorts",
-    available: () => (have($item`Cargo Cultist Shorts`) && !get("_cargoPocketEmptied") ? 1 : 0),
+    remaining: () =>
+      have($item`Cargo Cultist Shorts`) &&
+      (!get("_cargoPocketEmptied") || have($item`greasy desk bell`))
+        ? 1
+        : 0,
     canFight: (mon: Monster) => mon === $monster`Astrologer of Shub-Jigguwatt`,
     summon: (mon: Monster) => {
       if (mon === $monster`Astrologer of Shub-Jigguwatt`) {
-        cliExecute("cargo 533");
+        if (!have($item`greasy desk bell`)) cliExecute("cargo 533");
         use($item`greasy desk bell`);
       }
     },
   },
   {
     name: "Fax",
-    available: () => {
+    remaining: () => {
       if (
         args.resources.fax &&
         !underStandard() &&
@@ -90,7 +95,7 @@ export const summonSources: SummonSource[] = [
   },
   {
     name: "Wish",
-    available: () => (have($item`genie bottle`) ? 3 - get("_genieWishesUsed") : 0),
+    remaining: () => (have($item`genie bottle`) ? 3 - get("_genieWishesUsed") : 0),
     canFight: () => true,
     summon: (mon: Monster) => {
       cliExecute(`genie monster ${mon.name}`);

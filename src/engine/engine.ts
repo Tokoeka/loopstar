@@ -62,10 +62,11 @@ import {
   Engine as BaseEngine,
   CombatResources,
   CombatStrategy,
+  EngineOptions,
   lastEncounterWasWanderingNC,
   Outfit,
 } from "grimoire-kolmafia";
-import { CombatActions, MyActionDefaults } from "./combat";
+import { CombatActions, MyActionDefaults, replaceActions } from "./combat";
 import {
   cacheDress,
   equipCharging,
@@ -90,7 +91,12 @@ import { applyEffects, customRestoreMp } from "./moods";
 import { ROUTE_WAIT_TO_NCFORCE } from "../route";
 import { unusedBanishes } from "../resources/banish";
 import { CombatResource } from "../resources/lib";
-import { canChargeVoid, wandererSources } from "../resources/wanderer";
+import {
+  canChargeVoid,
+  ChainSource,
+  getChainSources,
+  wandererSources,
+} from "../resources/wanderer";
 import { getRunawaySources } from "../resources/runaway";
 import { freekillSources } from "../resources/freekill";
 import { forceItemSources, yellowRaySources } from "../resources/yellowray";
@@ -106,8 +112,9 @@ export type ActiveTask = Task & {
 };
 
 export class Engine extends BaseEngine<CombatActions, ActiveTask> {
-  constructor(tasks: Task[]) {
-    super(tasks, { combat_defaults: new MyActionDefaults() });
+  constructor(tasks: Task[], options: EngineOptions<CombatActions, ActiveTask> = {}) {
+    if (!options.combat_defaults) options.combat_defaults = new MyActionDefaults();
+    super(tasks, options);
   }
 
   public getNextTask(): ActiveTask | undefined {
@@ -147,8 +154,13 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
     }
 
     // Otherwise, choose from all available tasks
+    const chainSources = getChainSources();
     const taskPriorities = availableTasks.map((task) => {
-      return { ...task, activePriority: Prioritization.from(task), availableTasks: availableTasks };
+      return {
+        ...task,
+        activePriority: this.prioritize(task, chainSources),
+        availableTasks: availableTasks,
+      };
     });
 
     // Sort tasks in a stable way, by priority (decreasing) and then by route
@@ -171,6 +183,10 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
 
     // No next task
     return undefined;
+  }
+
+  prioritize(task: ActiveTask, chainSources: ChainSource[]): Prioritization {
+    return Prioritization.from(task, this.createOutfit(task), chainSources);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -198,7 +214,7 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
     } else if (!(task.ready?.() ?? true)) {
       debug(`${task.name} not completed! [Again? Not ready]`, "blue");
     } else {
-      const priority_explain = Prioritization.from(task).explain();
+      const priority_explain = this.prioritize(task, getChainSources()).explain();
       if (priority_explain !== "") {
         debug(`${task.name} not completed! [Again? ${priority_explain}]`, "blue");
       } else {
@@ -253,7 +269,7 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
     }
 
     // Equip initial equipment
-    equipInitial(outfit);
+    this.customizeOutfitInitial(outfit);
 
     // Force the June cleaver if we really want it
     if (task.activePriority?.has(Priorities.GoodCleaver)) outfit.equip($item`June cleaver`);
@@ -344,7 +360,7 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
 
       // Set up a runaway if there are combats we do not care about
       if (!outfit.skipDefaults) {
-        const runawaySources = getRunawaySources(task.name);
+        const runawaySources = getRunawaySources().filter((s) => !s.blocked?.includes(task.name));
         let runaway: (CombatResource & { banishes?: boolean }) | undefined = undefined;
         if (combat.can("ignore") || combat.can("ignoreSoftBanish")) {
           // First, try guaranteed runaways
@@ -414,7 +430,10 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
       const nc_blacklist = new Set<Location>(
         $locations`The Enormous Greater-Than Sign, The Copperhead Club, The Black Forest`
       );
-      const nc_task_blacklist = new Set<string>(["Misc/Protonic Ghost"]);
+      const nc_task_blacklist = new Set<string>([
+        "Misc/Protonic Ghost",
+        "Gyou/Spectral Jellyfish", // gyou
+      ]);
       if (
         forceNCPossible() &&
         !(task.do instanceof Location && nc_blacklist.has(task.do)) &&
@@ -450,16 +469,23 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
     )
       wanderers.push(...equipUntilCapped(outfit, wandererSources));
 
-    const mightKillSomething =
-      task.activePriority?.has(Priorities.Wanderer) ||
-      task.combat?.can("kill") ||
-      task.combat?.can("killHard") ||
-      task.combat?.can("killItem") ||
-      task.combat?.can("killFree") ||
-      task.combat?.can("forceItems") ||
-      task.combat?.can("yellowRay") ||
-      (!resources.has("ignore") && !resources.has("banish"));
-    equipCharging(outfit, mightKillSomething ?? false, task.nofightingfamiliars ?? false);
+    if (!outfit.skipDefaults) {
+      const mightKillSomething =
+        task.activePriority?.has(Priorities.Wanderer) ||
+        task.combat?.can("kill") ||
+        task.combat?.can("killHard") ||
+        task.combat?.can("killItem") ||
+        task.combat?.can("killFree") ||
+        task.combat?.can("forceItems") ||
+        task.combat?.can("yellowRay") ||
+        (!resources.has("ignore") && !resources.has("banish"));
+      this.customizeOutfitCharging(
+        task,
+        outfit,
+        mightKillSomething ?? false,
+        task.nofightingfamiliars ?? false
+      );
+    }
 
     // Prepare full outfit
     const freecombat =
@@ -512,17 +538,22 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
 
     // Upgrade normal kills to free kills if provided
     if (resources.has("killFree") && !task.boss) {
-      combat.action(
-        "killFree",
-        (combat.where("kill") ?? []).filter((mon) => !mon.boss)
-      );
-      combat.action(
-        "killFree",
-        (combat.where("killItem") ?? []).filter((mon) => !mon.boss)
-      );
-      if (combat.getDefaultAction() === "kill") combat.action("killFree");
-      if (combat.getDefaultAction() === "killItem") combat.action("killFree");
+      replaceActions(combat, "kill", "killFree");
+      replaceActions(combat, "killItem", "killFree");
     }
+  }
+
+  customizeOutfitInitial(outfit: Outfit): void {
+    equipInitial(outfit);
+  }
+
+  customizeOutfitCharging(
+    task: ActiveTask,
+    outfit: Outfit,
+    mightKillSomething: boolean,
+    noFightingFamiliars: boolean
+  ): void {
+    equipCharging(outfit, mightKillSomething, noFightingFamiliars);
   }
 
   createOutfit(task: Task): Outfit {
@@ -676,7 +707,12 @@ export class Engine extends BaseEngine<CombatActions, ActiveTask> {
     const result = typeof task.do === "function" ? task.do() : task.do;
     if (result instanceof Location) {
       const monster_to_map = undelay(task.map_the_monster) ?? $monster`none`;
-      if (task.map_the_monster && monster_to_map !== $monster`none` && get("_monstersMapped") < 3) {
+      if (
+        task.map_the_monster &&
+        monster_to_map !== $monster`none` &&
+        get("_monstersMapped") < 3 &&
+        have($skill`Map the Monsters`)
+      ) {
         useSkill($skill`Map the Monsters`);
         if (get("mappingMonsters")) {
           for (let i = 0; i < 4; i++) {

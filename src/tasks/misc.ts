@@ -2,7 +2,9 @@ import { CombatStrategy, killMacro } from "../engine/combat";
 import {
   buy,
   cliExecute,
+  equip,
   equippedAmount,
+  equippedItem,
   familiarWeight,
   floristAvailable,
   fullnessLimit,
@@ -66,6 +68,7 @@ import {
   Clan,
   ClosedCircuitPayphone,
   DaylightShavings,
+  directlyUse,
   ensureEffect,
   get,
   getSaleValue,
@@ -78,6 +81,7 @@ import {
   TrainSet,
   undelay,
   uneffect,
+  unequip,
 } from "libram";
 import { Quest, Task } from "../engine/task";
 import { Guards, Outfit, OutfitSpec, step } from "grimoire-kolmafia";
@@ -87,7 +91,7 @@ import { Keys, keyStrategy } from "./keys";
 import { atLevel, haveLoathingIdolMicrophone, primestatId, underStandard } from "../lib";
 import { args, toTempPref } from "../args";
 import { coldPlanner, yellowSubmarinePossible } from "../engine/outfit";
-import { fillHp } from "../engine/moods";
+import { fillHp, swapEquipmentForMp } from "../engine/moods";
 import { Station } from "libram/dist/resources/2022/TrainSet";
 import { getActiveBackupTarget } from "../resources/backup";
 import { warCleared } from "./level12";
@@ -107,6 +111,22 @@ export const MiscQuest: Quest = {
         else cliExecute("acquire 1 desert bus pass");
       },
       outfit: { equip: $items`designer sweatpants` },
+      limit: { tries: 1 },
+      freeaction: true,
+    },
+    {
+      name: "Leprecondo",
+      // eslint-disable-next-line libram/verify-constants
+      ready: () => have($item`Leprecondo`),
+      completed: () => isLeprecondoComplete() || get("_leprecondoRearrangements", 0) >= 3,
+      do: () => {
+        const furniture = chooseBestLeprecondo();
+        // eslint-disable-next-line libram/verify-constants
+        directlyUse($item`Leprecondo`);
+        visitUrl(
+          `choice.php?pwd&option=1&whichchoice=1556&r0=${furniture[0]}&r1=${furniture[1]}&r2=${furniture[2]}&r3=${furniture[3]}`
+        );
+      },
       limit: { tries: 1 },
       freeaction: true,
     },
@@ -887,24 +907,46 @@ export const MiscQuest: Quest = {
       ready: () => CinchoDeMayo.currentCinch() + CinchoDeMayo.cinchRestoredBy() <= 100,
       completed: () => !have($item`Cincho de Mayo`) || get("timesRested") >= totalFreeRests(),
       do: () => {
-        if (myMp() === myMaxmp() && myHp() === myMaxhp()) {
-          // We cannot rest with full HP and MP, so burn 1 MP with a starting skill.
-          useSkill(
-            byClass({
-              "Seal Clubber": $skill`Seal Clubbing Frenzy`,
-              "Turtle Tamer": $skill`Patience of the Tortoise`,
-              Pastamancer: $skill`Manicotti Meditation`,
-              Sauceror: $skill`Sauce Contemplation`,
-              "Disco Bandit": $skill`Disco Aerobics`,
-              "Accordion Thief": $skill`Moxie of the Mariachi`,
-              default: $skill`none`,
-            })
-          );
-        }
-
         if (get("chateauAvailable") && !underStandard()) {
           visitUrl("place.php?whichplace=chateau&action=chateau_restlabelfree");
-        } else if (get("getawayCampsiteUnlocked") && !underStandard()) {
+          return;
+        }
+
+        // For other sources, we cannot rest with full HP and MP.
+        // First, try burning 1 MP with a starting skill.
+        if (myMp() === myMaxmp() && myHp() === myMaxhp()) {
+          const drainer = byClass({
+            "Seal Clubber": $skill`Seal Clubbing Frenzy`,
+            "Turtle Tamer": $skill`Patience of the Tortoise`,
+            Pastamancer: $skill`Manicotti Meditation`,
+            Sauceror: $skill`Sauce Contemplation`,
+            "Disco Bandit": $skill`Disco Aerobics`,
+            "Accordion Thief": $skill`Moxie of the Mariachi`,
+            default: $skill`none`,
+          });
+          if (drainer !== $skill`none`) {
+            useSkill(drainer);
+          } else {
+            // Next, try putting on some extra gear for max MP
+            swapEquipmentForMp(myMaxmp() + 1);
+          }
+        }
+
+        // Finally, try unequiping some existing gear that provides MP/HP and re-equip it
+        if (myMp() === myMaxmp() && myHp() === myMaxhp()) {
+          for (const slot of $slots`shirt, acc1, acc2, acc3, pants, back, hat`) {
+            const item = equippedItem(slot);
+            if (
+              numericModifier(item, "Maximum HP") >= 0 &&
+              numericModifier(item, "Maximum MP") >= 0
+            ) {
+              unequip(slot);
+              equip(item, slot);
+            }
+          }
+        }
+
+        if (get("getawayCampsiteUnlocked") && !underStandard()) {
           visitUrl("place.php?whichplace=campaway&action=campaway_tentclick");
         } else {
           visitUrl("campground.php?action=rest");
@@ -967,7 +1009,10 @@ export const MiscQuest: Quest = {
       choices: { 1498: 1 },
       combat: new CombatStrategy()
         .macro((): Macro => {
-          const result = Macro.while_("hasskill 226", Macro.skill($skill`Perpetrate Mild Evil`));
+          const result = Macro.while_(
+            "hasskill 226",
+            Macro.skill($skill`Perpetrate Mild Evil`)
+          ).trySkill($skill`Swoop like a Bat`);
           // Use all but the last extinguisher uses on polar vortex.
           const vortex_count = (get("_fireExtinguisherCharge") - 20) / 10;
           if (vortex_count > 0) {
@@ -993,6 +1038,9 @@ export const MiscQuest: Quest = {
           result.equip?.push($item`Daylight Shavings Helmet`);
         if (have($item`Flash Liquidizer Ultra Dousing Accessory`) && get("_douseFoeUses") < 3)
           result.equip?.push($item`Flash Liquidizer Ultra Dousing Accessory`);
+        if (have($item`bat wings`) && get("_batWingsFreeFights") === 5) {
+          result.equip?.push($item`bat wings`);
+        }
         return result;
       },
       boss: true,
@@ -1014,7 +1062,7 @@ export const MiscQuest: Quest = {
       name: "Eldritch Tentacle",
       after: ["Keys/Star Key", "Crypt/Cranny"],
       ready: () => get("questL02Larva") !== "unstarted",
-      completed: () => get("_eldritchTentacleFought"),
+      completed: () => get("_eldritchTentacleFought") || step("questL13Final") > -1,
       do: () => {
         visitUrl("place.php?whichplace=forestvillage&action=fv_scientist", false);
         runChoice(1);
@@ -1051,17 +1099,7 @@ export const MiscQuest: Quest = {
       completed: () => get("_daycareGymScavenges") !== 0,
       do: (): void => {
         if ((get("daycareOpen") || get("_daycareToday")) && !get("_daycareSpa")) {
-          switch (myPrimestat()) {
-            case $stat`Muscle`:
-              cliExecute("daycare muscle");
-              break;
-            case $stat`Mysticality`:
-              cliExecute("daycare myst");
-              break;
-            case $stat`Moxie`:
-              cliExecute("daycare moxie");
-              break;
-          }
+          cliExecute("daycare myst");
         }
         visitUrl("place.php?whichplace=town_wrong&action=townwrong_boxingdaycare");
         runChoice(3);
@@ -1606,4 +1644,20 @@ function getDesiredTrainsetConfig(): TrainSet.Cycle {
   config.push(Station.GRAIN_SILO);
   config.push(Station.CANDY_FACTORY);
   return config.slice(0, 8) as TrainSet.Cycle;
+}
+
+function chooseBestLeprecondo(): number[] {
+  const furnitureFound = new Set(get("leprecondoDiscovered", "").split(",").map(Number));
+
+  // Prioritizing familiar weight/Experience, then Meat Find, then random Booze
+  const f1 = furnitureFound.has(21) ? 21 : 0; // Whiskeybed First to prevent overriding anything important
+  const f2 = furnitureFound.has(8) ? 8 : 0; // Karaoke -> overwritten with treadmill for familiar weight
+  const f3 = furnitureFound.has(9) ? 9 : 0; // Treadmill -> exercise, don't care about the food
+  const f4 = furnitureFound.has(13) ? 13 : 0; // Sous vide -> meat% and random food
+
+  return [f1, f2, f3, f4];
+}
+
+function isLeprecondoComplete(): boolean {
+  return get("leprecondoInstalled", "0,0,0,0") === chooseBestLeprecondo().join(",");
 }

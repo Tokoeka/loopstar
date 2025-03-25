@@ -45,6 +45,7 @@ import { args, toTempPref } from "../args";
 import { trainSetAvailable } from "./misc";
 import { haveFlorest, underStandard } from "../lib";
 import { castWithMpSwaps, ensureWithMPSwaps } from "../engine/moods";
+import { Priorities } from "../engine/priority";
 
 export enum Keys {
   Deck = "Deck",
@@ -198,8 +199,12 @@ function dailyDungeonTask(): Omit<Task, "completed" | "name" | "after"> {
     outfit: { equip: $items`ring of Detect Boring Doors, candy cane sword cane` },
     combat: new CombatStrategy()
       .macro(() => {
-        if (!get("_dailyDungeonMalwareUsed") && have($item`daily dungeon malware`))
-          return Macro.item($item`daily dungeon malware`);
+        if (
+          !get("_dailyDungeonMalwareUsed") &&
+          have($item`daily dungeon malware`) &&
+          keyStrategy.useful(Keys.Malware)
+        )
+          return Macro.tryItem($item`daily dungeon malware`);
         return new Macro();
       })
       .killHard(),
@@ -381,11 +386,22 @@ export const DigitalQuest: Quest = {
       },
       combat: new CombatStrategy().kill(),
       limit: { soft: 16 },
+      nochain: true,
     },
     {
       name: "Vanya",
       after: ["Open"],
       completed: () => getScore() >= 10000,
+      priority: () => {
+        if (
+          have($item`Everfull Dart Holster`) &&
+          !have($effect`Everything Looks Red`) &&
+          myTurncount() >= 30
+        ) {
+          return Priorities.GoodDarts;
+        }
+        return Priorities.None;
+      },
       prepare: () => {
         if (numericModifier("Initiative") < 600 && have($skill`Silent Hunter`)) {
           if (myClass() === $class`Seal Clubber`) ensureWithMPSwaps($effects`Silent Hunting`);
@@ -394,7 +410,7 @@ export const DigitalQuest: Quest = {
 
         if (
           have($item`designer sweatpants`) &&
-          get("sweat", 0) >= 90 &&
+          get("sweat", 0) >= 15 &&
           numericModifier("Initiative") < 600
         ) {
           // Use visit URL to avoid needing to equip the pants
@@ -406,7 +422,7 @@ export const DigitalQuest: Quest = {
       outfit: () => {
         return {
           modifier: "init",
-          equip: $items`continuum transfunctioner, backup camera`,
+          equip: $items`continuum transfunctioner, backup camera, bat wings`,
           modes: { backupcamera: "init" },
           avoid: $items`Roman Candelabra`,
         };
@@ -414,11 +430,22 @@ export const DigitalQuest: Quest = {
       combat: new CombatStrategy().kill(),
       limit: { soft: 16 },
       delay: 16,
+      nochain: true,
     },
     {
       name: "Megalo",
       after: ["Open"],
       completed: () => getScore() >= 10000,
+      priority: () => {
+        if (
+          have($item`Everfull Dart Holster`) &&
+          !have($effect`Everything Looks Red`) &&
+          myTurncount() >= 30
+        ) {
+          return Priorities.GoodDarts;
+        }
+        return Priorities.None;
+      },
       prepare: () => {
         // Get the GAP DA buff, saving 1 for after the run
         if (haveEquipped($item`Greatest American Pants`) && get("_gapBuffs") < 4) {
@@ -444,6 +471,7 @@ export const DigitalQuest: Quest = {
       combat: new CombatStrategy().kill(),
       limit: { soft: 16 },
       delay: 16,
+      nochain: true,
     },
     {
       name: "Hero",
@@ -473,6 +501,7 @@ export const DigitalQuest: Quest = {
       },
       combat: new CombatStrategy().killItem(),
       limit: { soft: 16 },
+      nochain: true,
     },
     {
       name: "Key",

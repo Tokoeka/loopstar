@@ -100,7 +100,7 @@ function getAllocators(): Allocator[] {
           name: s.name,
           appliesTo: (which: ResourceType) =>
             typeof which === "object" && "summon" in which && s.canFight(which.summon),
-          amount: () => s.available(),
+          amount: () => s.remaining(),
           delta: (req) =>
             <DeltaTask>{
               replace: {
@@ -168,7 +168,8 @@ export function allocateResources(tasks: Task[], verbose = false): Map<string, D
       debug(`${name}: ${requestStr} x${request.repeat ?? 1} for ${valueStr}`);
     }
     let foundResource = false;
-    for (let i = 0; i < (request.repeat ?? 1); i++) {
+    const repeat = request.repeat ?? 1;
+    for (let i = 0; i < repeat; i++) {
       // Try to find a resource to fulfill the request
       const foundIndex = allocators.findIndex(
         (a, i) => a.appliesTo(request.which) && remainingToAllocate[i] > 0
@@ -186,17 +187,19 @@ export function allocateResources(tasks: Task[], verbose = false): Map<string, D
         foundResource = true;
       } else {
         if (verbose && i > 0) {
-          debug(` # Unallocated ${(request.repeat ?? 1) - i + 1}`);
+          debug(` # Unallocated x${repeat - i}`);
         }
         break; // Any further repeated requests will fail anyway
       }
     }
 
-    if (!foundResource && request.required) {
-      // Block the task from running
-      fulfillments.set(task.name, UNALLOCATED);
+    if (!foundResource) {
+      if (request.required) {
+        // Block the task from running
+        fulfillments.set(task.name, UNALLOCATED);
+      }
       if (verbose) {
-        debug(` # Unallocated`);
+        debug(` # Unallocated x${repeat}`);
       }
     }
   }

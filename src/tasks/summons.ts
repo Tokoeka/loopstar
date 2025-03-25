@@ -17,6 +17,7 @@ const summonTargets: SummonTarget[] = [
   {
     target: $monster`War Frat 151st Infantryman`,
     priority: () => Priorities.Start,
+    ready: () => !have($effect`Everything Looks Yellow`),
     completed: () =>
       have($item`beer helmet`) &&
       have($item`distressed denim pants`) &&
@@ -75,7 +76,7 @@ const summonTargets: SummonTarget[] = [
       have($item`Richard's star key`) ||
       get("nsTowerDoorKeysUsed").includes("Richard's star key") ||
       !have($item`Cargo Cultist Shorts`) ||
-      get("_cargoPocketEmptied"),
+      (get("_cargoPocketEmptied") && !have($item`greasy desk bell`)),
     prepare: () => {
       fillHp();
     },

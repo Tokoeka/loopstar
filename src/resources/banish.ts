@@ -1,11 +1,21 @@
-import { Item, myClass, myFury, myMaxmp, myMp, myTurncount, Skill } from "kolmafia";
+import { Item, Monster, myClass, myFury, myMaxmp, myMp, myTurncount, Skill } from "kolmafia";
 import { BanishState } from "../engine/state";
-import { $class, $effect, $item, $items, $skill, get, have, Macro } from "libram";
+import {
+  $class,
+  $effect,
+  $item,
+  $items,
+  $skill,
+  AsdonMartin,
+  Delayed,
+  get,
+  have,
+  Macro,
+} from "libram";
 import { args } from "../args";
 import { killMacro } from "../engine/combat";
 import { customRestoreMp } from "../engine/moods";
 import { asdonFualable } from "../lib";
-import { asdonFillTo } from "../lib";
 import { refillLatte } from "./runaway";
 import { CombatResource } from "./lib";
 import { Task } from "../engine/task";
@@ -14,12 +24,14 @@ type BanishSimpleDo = CombatResource & {
   do: Item | Skill;
   free: boolean;
   blocked?: string[];
+  parallel?: number;
 };
 type BanishMacroDo = CombatResource & {
-  do: Macro;
+  do: Macro | Delayed<Macro>;
   tracker: Item | Skill;
   free: boolean;
   blocked?: string[];
+  parallel?: number;
 };
 export type BanishSource = BanishSimpleDo | BanishMacroDo;
 function getTracker(source: BanishSource): Item | Skill {
@@ -50,7 +62,7 @@ const banishSources: BanishSource[] = [
       if (bumperIndex === -1) return true;
       return myTurncount() - parseInt(banishes[bumperIndex + 1]) > 30;
     },
-    prepare: () => asdonFillTo(50),
+    prepare: () => AsdonMartin.fillTo(50),
     do: $skill`Asdon Martin: Spring-Loaded Front Bumper`,
     free: true,
     blocked: ["Tavern/Basement", "Bat/Boss Bat"],
@@ -62,6 +74,12 @@ const banishSources: BanishSource[] = [
     do: Macro.skill($skill`Spring Kick`).skill($skill`Spring Away`),
     tracker: $skill`Spring Kick`,
     free: true,
+  },
+  {
+    name: "System Sweep",
+    available: () => have($skill`System Sweep`),
+    do: $skill`System Sweep`,
+    free: false,
   },
   {
     name: "Feel Hatred",
@@ -126,7 +144,7 @@ const banishSources: BanishSource[] = [
     name: "Spring Shoes Kick",
     available: () => have($item`spring shoes`),
     equip: $item`spring shoes`,
-    do: Macro.skill($skill`Spring Kick`).step(killMacro()),
+    do: () => Macro.skill($skill`Spring Kick`).step(killMacro()),
     tracker: $skill`Spring Kick`,
     free: false,
   },
@@ -146,13 +164,17 @@ export function unusedBanishes(
   tasks: Task[],
   taskName: string
 ): BanishSource[] {
-  const used_banishes = new Set<Item | Skill>();
+  const activelyBanished = new Map<Item | Skill, Set<Monster>>();
   for (const task of tasks) {
     if (task.combat === undefined) continue;
     if (task.ignorebanishes?.()) continue;
     for (const monster of task.combat.where("banish")) {
-      const banished_with = banishState.already_banished.get(monster);
-      if (banished_with !== undefined) used_banishes.add(banished_with);
+      const banishedWith = banishState.already_banished.get(monster);
+      if (banishedWith) {
+        const banishList = activelyBanished.get(banishedWith);
+        if (banishList) banishList.add(monster);
+        else activelyBanished.set(banishedWith, new Set([monster]));
+      }
     }
   }
 
@@ -160,6 +182,6 @@ export function unusedBanishes(
     (banish) =>
       banish.available() &&
       !banish.blocked?.includes(taskName) &&
-      !used_banishes.has(getTracker(banish))
+      (activelyBanished.get(getTracker(banish))?.size ?? 0) < (banish.parallel ?? 1)
   );
 }

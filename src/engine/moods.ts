@@ -1,5 +1,6 @@
 import {
   canEquip,
+  cliExecute,
   Effect,
   equip,
   equippedAmount,
@@ -51,7 +52,6 @@ import {
   uneffect,
 } from "libram";
 import { asdonFualable } from "../lib";
-import { asdonFillTo } from "../lib";
 import { underStandard } from "../lib";
 import { step } from "grimoire-kolmafia";
 
@@ -141,6 +141,12 @@ function getRelevantEffects(): { [modifier: string]: Effect[] } {
       all_attributes.push($effect`Total Protonic Reversal`);
   }
 
+  if (myPath() === $path`Grey You`) {
+    result["-combat"].push($effect`Shifted Phase`);
+    result["-combat"].push($effect`Darkened Photons`);
+    result["+combat"].push($effect`Hooooooooonk!`);
+  }
+
   result[" combat"] = result["+combat"];
   result["muscle"].push(...all_attributes);
   result["mysticality"].push(...all_attributes);
@@ -162,7 +168,10 @@ export function moodCompatible(modifier: string | undefined): boolean {
     return (
       !have($effect`Smooth Movements`) &&
       !have($effect`The Sonata of Sneakiness`) &&
-      !have($effect`Hiding From Seekers`)
+      !have($effect`Hiding From Seekers`) &&
+      // Gyou Effects
+      !have($effect`Shifted Phase`) &&
+      !have($effect`Darkened Photons`)
     );
   }
   if (modifier.includes("-combat")) {
@@ -171,7 +180,9 @@ export function moodCompatible(modifier: string | undefined): boolean {
       !have($effect`Carlweather's Cantata of Confrontation`) &&
       !have($effect`Romantically Roused`) &&
       !have($effect`Fresh Breath`) &&
-      !have($effect`Attracting Snakes`)
+      !have($effect`Attracting Snakes`) &&
+      // Gyou Effects
+      !have($effect`Hooooooooonk!`)
     );
   }
   return true;
@@ -222,13 +233,12 @@ export function applyEffects(modifier: string, other_effects: Effect[]): void {
     // else if (modifier.includes("+combat")) AsdonMartin.drive(AsdonMartin.Driving.Obnoxiously);
     // else if (modifier.includes("init")) AsdonMartin.drive(AsdonMartin.Driving.Quickly);
     if (modifier.includes("meat") || modifier.includes("item")) {
-      if (!have($effect`Driving Observantly`)) asdonFillTo(50); // done manually to use all-purpose flower
-      AsdonMartin.drive(AsdonMartin.Driving.Observantly);
+      if (!have($effect`Driving Observantly`)) AsdonMartin.drive(AsdonMartin.Driving.Observantly);
     }
   }
 }
 
-export function ensureWithMPSwaps(effects: Effect[]) {
+export function ensureWithMPSwaps(effects: Effect[], required = true) {
   // Apply all relevant effects
   const hotswapped: [Slot, Item][] = []; //
   for (const effect of effects) {
@@ -245,7 +255,11 @@ export function ensureWithMPSwaps(effects: Effect[]) {
       hotswapped.push(...swapEquipmentForMp(mpcost));
     }
     if (myMp() < mpcost) customRestoreMp(mpcost);
-    ensureEffect(effect);
+    if (required) {
+      ensureEffect(effect);
+    } else {
+      cliExecute(effect.default);
+    }
   }
 
   // If we hotswapped equipment, restore our old equipment (in-reverse, to work well if we moved equipment around)

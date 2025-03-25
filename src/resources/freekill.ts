@@ -1,10 +1,9 @@
 import { Item, Skill } from "kolmafia";
-import { $effect, $item, $items, $skill, get, have } from "libram";
+import { $effect, $item, $items, $skill, AsdonMartin, get, have } from "libram";
 import { asdonFualable } from "../lib";
-import { asdonFillTo } from "../lib";
 import { CombatResource } from "./lib";
 
-export interface FreekillSource extends CombatResource {
+interface FreekillSource extends CombatResource {
   do: Item | Skill;
 }
 
@@ -39,7 +38,7 @@ export const freekillSources: FreekillSource[] = [
   {
     name: "Asdon Martin: Missile Launcher",
     available: () => asdonFualable(100) && !get("_missileLauncherUsed"),
-    prepare: () => asdonFillTo(100),
+    prepare: () => AsdonMartin.fillTo(100),
     do: $skill`Asdon Martin: Missile Launcher`,
   },
   {

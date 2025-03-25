@@ -84,9 +84,17 @@ export function killMacro(hard?: boolean): Macro {
     }
   }
 
-  if (!haveEquipped($item`June cleaver`)) {
+  if (!haveEquipped($item`June cleaver`) && have($skill`Saucestorm`)) {
     result.while_("!mpbelow 6", new Macro().skill($skill`Saucestorm`));
   }
 
   return result.attack().repeat();
+}
+
+export function replaceActions<T extends string>(combat: BaseCombatStrategy<T>, from: T, to: T) {
+  combat.action(
+    to,
+    (combat.where(from) ?? []).filter((mon: Monster) => !mon.boss)
+  );
+  if (combat.getDefaultAction() === from) combat.action(to);
 }

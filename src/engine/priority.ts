@@ -2,11 +2,13 @@
  * Temporary priorities that override the routing.
  */
 
-import { getCounter, Location, Monster, myLocation } from "kolmafia";
+import { familiarWeight, getCounter, Location, Monster, myLocation, myPath } from "kolmafia";
 import {
   $effect,
+  $familiar,
   $item,
   $location,
+  $path,
   $skill,
   get,
   getTodaysHolidayWanderers,
@@ -21,10 +23,11 @@ import { canEquipResource, getModifiersFrom } from "./outfit";
 import { Outfit } from "grimoire-kolmafia";
 import { args } from "../args";
 import { forceItemSources, yellowRaySources } from "../resources/yellowray";
-import { ChainSource, chainSources, WandererSource, wandererSources } from "../resources/wanderer";
+import { ChainSource, WandererSource, wandererSources } from "../resources/wanderer";
 import { getActiveBackupTarget } from "../resources/backup";
 import { cosmicBowlingBallReady } from "../lib";
 import { asdonBanishAvailable } from "../resources/runaway";
+import { globalAbsorbState } from "../paths/gyou/absorb";
 
 export class Priorities {
   static Always: Priority = { score: 40000, reason: "Forced" };
@@ -68,6 +71,7 @@ export class Priorities {
   static BadYR: Priority = { score: -16, reason: "Too early for yellow ray" };
   static BadSweat: Priority = { score: -20, reason: "Not enough sweat" };
   static BadProtonic: Priority = { score: -40, reason: "Protonic ghost here" };
+  static BadStats: Priority = { score: -50, reason: "Low stats" };
   static BadMood: Priority = { score: -100, reason: "Wrong effects" };
   static Last: Priority = { score: -10000, reason: "Only if nothing else" };
 }
@@ -84,10 +88,9 @@ export class Prioritization {
     return result;
   }
 
-  static from(task: Task): Prioritization {
+  static from(task: Task, outfit: Outfit, chainSources: ChainSource[]): Prioritization {
     const result = new Prioritization();
     const base = task.priority?.() ?? Priorities.None;
-    const outfitSpec = undelay(task.outfit);
 
     if (Array.isArray(base)) {
       for (const priority of base) result.priorities.add(priority);
@@ -116,18 +119,9 @@ export class Prioritization {
       } else result.priorities.add(Priorities.GoodYR);
     }
 
-    // Dodge useless monsters with the orb
-    if (task.do instanceof Location) {
-      const next_monster = globalStateCache.orb().prediction(task.do);
-      if (next_monster !== undefined) {
-        result._orbMonster = next_monster;
-        result.priorities.add(orbPriority(task, next_monster));
-      }
-    }
-
     // Ensure that the current +/- combat effects are compatible
     //  (Macguffin/Forest is tough and doesn't need much +combat; just power though)
-    const modifier = getModifiersFrom(outfitSpec);
+    const modifier = getModifiersFrom(outfit);
     if (!moodCompatible(modifier) && task.name !== "Macguffin/Forest") {
       result.priorities.add(Priorities.BadMood);
     }
@@ -188,6 +182,15 @@ export class Prioritization {
         result.priorities.add(Priorities.GoodLocation);
     }
 
+    // Dodge useless monsters with the orb
+    if (task.do instanceof Location && !result.priorities.has(Priorities.GoodLocation)) {
+      const next_monster = globalStateCache.orb().prediction(task.do);
+      if (next_monster !== undefined) {
+        result._orbMonster = next_monster;
+        result.priorities.add(orbPriority(task, next_monster));
+      }
+    }
+
     // Consider (more expensive to compute) ways to burn delay
     const delayRemaing = hasDelay(task);
     if (delayRemaing) {
@@ -195,8 +198,6 @@ export class Prioritization {
       if (have($item`backup camera`) && get("_backUpUses") < 11 - args.resources.savebackups) {
         const backup = getActiveBackupTarget();
         if (backup) {
-          const outfit = new Outfit();
-          if (outfitSpec !== undefined) outfit.equip(outfitSpec);
           if (outfit.canEquip($item`backup camera`)) {
             result.priorities.add(Priorities.LastCopyableMonster);
           }
@@ -207,17 +208,18 @@ export class Prioritization {
       const wanderer = wandererSources.find(
         (source) => source.available() && source.chance() === 1
       );
-      if (wanderer && (!wanderer.fulloutfit || !outfitSpec)) {
-        const outfit = new Outfit();
-        if (outfitSpec !== undefined) outfit.equip(outfitSpec);
+      if (wanderer && (!wanderer.fulloutfit || !undelay(task.outfit))) {
         const matchedSpec = canEquipResource(outfit, wanderer);
         if (matchedSpec !== undefined) {
-          outfit.equip(matchedSpec);
+          const wandererOutfit = outfit.clone();
+          wandererOutfit.equip(matchedSpec);
           const chainable = chainSources.find(
             (source) =>
-              source.available() && outfit.canEquip(source.equip) && source.length() <= delayRemaing
+              source.available() &&
+              wandererOutfit.canEquip(source.equip) &&
+              source.length <= delayRemaing
           );
-          if (chainable && wanderer.chainable) {
+          if (chainable && wanderer.chainable && !task.nochain) {
             result.priorities.add(Priorities.ChainWanderer);
             result._chain = chainable;
           } else if (task.preferwanderer) {
@@ -345,6 +347,14 @@ export class Prioritization {
     return this._chain;
   }
 
+  public delete(p: Priority) {
+    this.priorities.delete(p);
+  }
+
+  public add(p: Priority) {
+    this.priorities.add(p);
+  }
+
   public score(): number {
     let result = 0;
     for (const priority of this.priorities) {
@@ -357,17 +367,27 @@ export class Prioritization {
 function orbPriority(task: Task, monster: Monster): Priority {
   if (!(task.do instanceof Location)) return Priorities.None;
 
+  // Determine any path-specific orb targetting
+  let pathTargets = new Set<Monster>();
+  if (myPath() === $path`Grey You`) {
+    // If the goose is not charged, do not aim to reprocess
+    if (globalAbsorbState.isReprocessTarget(monster) && familiarWeight($familiar`Grey Goose`) < 6)
+      return Priorities.None;
+    pathTargets = globalAbsorbState.getActiveTargets(task.do);
+  }
+
   // Determine if a monster is useful or not based on the combat goals
   if (task.orbtargets === undefined) {
     const task_combat = task.combat ?? new CombatStrategy();
     const next_monster_strategy = task_combat.currentStrategy(monster);
 
     const next_useless =
-      next_monster_strategy === "ignore" ||
-      next_monster_strategy === "ignoreNoBanish" ||
-      next_monster_strategy === "ignoreSoftBanish" ||
-      next_monster_strategy === "banish" ||
-      next_monster_strategy === undefined;
+      !pathTargets.has(monster) &&
+      (next_monster_strategy === "ignore" ||
+        next_monster_strategy === "ignoreNoBanish" ||
+        next_monster_strategy === "ignoreSoftBanish" ||
+        next_monster_strategy === "banish" ||
+        next_monster_strategy === undefined);
 
     const others_useless =
       task_combat.can("ignore") ||
@@ -380,7 +400,8 @@ function orbPriority(task: Task, monster: Monster): Priority {
       task_combat.can("kill") ||
       task_combat.can("killFree") ||
       task_combat.can("killHard") ||
-      task_combat.can("killItem");
+      task_combat.can("killItem") ||
+      pathTargets.size;
 
     if (next_useless && others_useful) {
       return Priorities.BadOrb;
@@ -392,7 +413,8 @@ function orbPriority(task: Task, monster: Monster): Priority {
   }
 
   // Use orbtargets to decide if the next monster is useful
-  const targets = task.orbtargets();
+  const taskTargets = task.orbtargets() ?? [];
+  const targets = [...taskTargets, ...pathTargets];
   if (targets === undefined) return Priorities.None;
   if (targets.length === 0) return Priorities.None;
   if (targets.find((t) => t === monster) === undefined) {
