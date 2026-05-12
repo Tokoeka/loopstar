@@ -100,7 +100,15 @@ function getRelevantEffects(): { [modifier: string]: Effect[] } {
   }
 
   if (myClass() !== $class`Pastamancer`) {
-    result["init"].push($effect`Whispering Strands`);
+
+    // eslint-disable-next-line libram/verify-constants
+    have($item`legendary pasta wand`) ?
+
+      // eslint-disable-next-line libram/verify-constants
+      result["init"].push($effect`Legendary Whispering Strands`)
+
+      : result["init"].push($effect`Whispering Strands`);
+
   }
 
   // If we are not in Smol,
